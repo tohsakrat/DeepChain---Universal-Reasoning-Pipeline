@@ -1,12 +1,9 @@
 """
-title: DeepChain
+title: CoT-Pipeline
 author: your_name
-description: DeepChain 思维链处理管道 - Open WebUI 0.5.6+
-version: 1.0.0
+description: 思维链处理管道 - Open WebUI 0.5.6+
+version: 1.1.0
 licence: MIT
-author_url: https://github.com/tohsakrat
-required_open_webui_version: 0.5.6
-❤❤❤ "If you find this project helpful, please consider giving it a star! ❤❤❤
 """
 
 import json
@@ -148,6 +145,7 @@ class Pipe:
                 **body,
                 "model": self.valves.REASONING_MODEL,
                 "stream": True,
+                "include_reasoning": True,
             }
 
             response = await client.post(
@@ -185,7 +183,7 @@ class Pipe:
                     "reasoning_content"
                 ):
                     # yield "deepseek模式"
-                    yield self._should_end_reasoning(data)
+                    # yield self._should_end_reasoning(data)
                     self.buffer.append(delta["reasoning_content"])
                 else:
                     # yield "openai模式"
@@ -265,6 +263,8 @@ class Pipe:
             content = (
                 data.get("choices", [{}])[0].get("delta", {}).get("reasoning_content")
             )
+            if not content:
+                content = data.get("choices", [{}])[0].get("delta", {}).get("reasoning")
             if not content:
                 content = data.get("choices", [{}])[0].get("delta", {}).get("content")
 
