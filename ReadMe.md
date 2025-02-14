@@ -1,7 +1,5 @@
-作为open-webui的pipeline function，嫁接reasoning model的思考链，引导其他任何兼容openai接口的语言模型的输出。
 
-
-LLM生成的说明↓
+说明和标题都是ai生成的，如不恰当请轻踹↓
 
 该工具实现推理模型与生成模型的智能协作，主要功能：  
 1. 支持DeepSeek标准（通过reasoning_content字段）和OpenAI标准（使用<think>标签）的思考链  
