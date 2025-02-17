@@ -35,7 +35,6 @@ required_open_webui_version: 0.5.6
 
 """
 
-
 import json
 import httpx
 import re
@@ -179,66 +178,67 @@ class Pipe:
                 "include_reasoning": True,
             }
 
-            response = await client.post(
+            async with client.stream(
+                "POST",
                 f"{self.valves. REASONING_API_BASE}/chat/completions",
                 json=payload,
                 headers={"Authorization": f"Bearer {self.valves.REASONING_API_KEY}"},
                 timeout=30,
-            )
+            ) as response:
 
-            if response.status_code != 200:
-                error = response.json().get("error", {})
+                if response.status_code != 200:
+                    error = response.json().get("error", {})
 
-                raise RuntimeError(
-                    f"Reasoning API error: {error.get('message', 'Unknown')}"
-                )
+                    raise RuntimeError(
+                        f"Reasoning API error: {error.get('message', 'Unknown')}"
+                    )
 
-            # 进入流处理
-            self.state = "reasoning"
+                # 进入流处理
+                self.state = "reasoning"
 
-            # yield json.dumps(body, ensure_ascii=False)  # 输出参数调试log不好用的时候用
+                # yield json.dumps(body, ensure_ascii=False)  # 输出参数调试log不好用的时候用
 
-            async for line in response.aiter_lines():
-                # log.info(f"Received raw data: {line}")
-                # yield "{" + json.dumps(line, ensure_ascii=False) + "}" + "\n" + "\n"
+                async for line in response.aiter_lines():
+                    # log.info(f"Received raw data: {line}")
+                    # yield "{" + json.dumps(line, ensure_ascii=False) + "}" + "\n" + "\n"
 
-                if (not line) or (not line.startswith("data: ")):
-                    continue
-                # yield "进入请求" + line + "\n"
-                data = json.loads(line[6:])
-                # yield "读取到数据" + json.dumps(data, ensure_ascii=False) + "\n"
-                # yield json.dumps(data, ensure_ascii=False) + "\n"
-                delta = self._parse_delta(data)
-                # yield json.dumps(delta, ensure_ascii=False) + "\n"
-                # if self._should_end_reasoning(data):
-                #    yield "True"
-                # else:
-                #    yield "False"
-
-                if self._should_end_reasoning(data):
-                    break
-                reasoning_content = ""
-                if self.valves.CONTENT_TYPE == "deepseek" and delta.get(
-                    "reasoning_content"
-                ):
-                    # yield "deepseek模式"
-
-                    # yield self._should_end_reasoning(data)
-                    reasoning_content = delta["reasoning_content"]
-                else:
-                    # yield "openai模式"
+                    if (not line) or (not line.startswith("data: ")):
+                        continue
+                    # yield "进入请求" + line + "\n"
+                    data = json.loads(line[6:])
+                    # yield "读取到数据" + json.dumps(data, ensure_ascii=False) + "\n"
+                    # yield json.dumps(data, ensure_ascii=False) + "\n"
+                    delta = self._parse_delta(data)
                     # yield json.dumps(delta, ensure_ascii=False) + "\n"
+                    # if self._should_end_reasoning(data):
+                    #    yield "True"
+                    # else:
+                    #    yield "False"
 
-                    reasoning_content = delta["content"]
-                    # yield json.dumps(delta)
-                    # yield json.dumps(delta, ensure_ascii=False)
-                    # yield delta.get("content")
-                if not reasoning_content:
-                    continue
-                yield reasoning_content
-                self.buffer.append(reasoning_content)
-            # 终止请求以节省资源
-            await response.aclose()
+                    if self._should_end_reasoning(data):
+                        break
+                    reasoning_content = ""
+                    if self.valves.CONTENT_TYPE == "deepseek" and delta.get(
+                        "reasoning_content"
+                    ):
+                        # yield "deepseek模式"
+
+                        # yield self._should_end_reasoning(data)
+                        reasoning_content = delta["reasoning_content"]
+                    else:
+                        # yield "openai模式"
+                        # yield json.dumps(delta, ensure_ascii=False) + "\n"
+
+                        reasoning_content = delta["content"]
+                        # yield json.dumps(delta)
+                        # yield json.dumps(delta, ensure_ascii=False)
+                        # yield delta.get("content")
+                    if not reasoning_content:
+                        continue
+                    yield reasoning_content
+                    self.buffer.append(reasoning_content)
+                # 终止请求以节省资源
+                await response.aclose()
 
             # 发送缓冲内容
             self.final_reason = "".join(self.buffer)
