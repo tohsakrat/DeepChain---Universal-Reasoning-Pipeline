@@ -1,10 +1,40 @@
 """
-title: CoT-Pipeline
+title: DeepChain
 author: your_name
-description: 思维链处理管道 - Open WebUI 0.5.6+
-version: 1.1.0
+description: DeepChain 思维链处理管道 - Open WebUI 0.5.6+
+version: 1.0.1
 licence: MIT
+project_url: https://github.com/tohsakrat/DeepChain---Universal-Reasoning-Pipeline
+author_url: https://github.com/tohsakrat
+required_open_webui_version: 0.5.6
+❤❤❤ "If you find this project helpful, please consider giving it a star! ❤❤❤
+
+作为open-webui的pipeline function，嫁接reasoning model的思考链，引导其他任何兼容openai接口的语言模型的输出。
+
+说明和标题都是ai生成的，如不恰当请轻踹↓
+
+该工具实现推理模型与生成模型的智能协作，主要功能：  
+1. 支持DeepSeek标准（通过reasoning_content字段）和OpenAI标准（使用<think>标签）的思考链  
+2. 兼容DeepSeek官方/OpenRouter接口（DeepSeek标准）及Nebius等OpenAI标准服务  
+3. 为任意兼容OpenAI的模型提供结构化推理引导
+
+**DeepClaude Pipeline** bridges reasoning models with any OpenAI-compatible LLMs. Key features:  
+
+1. **Chain-of-Thought Integration**  
+   - Supports DeepSeek-style reasoning (via `reasoning_content` field) and OpenAI-style CoT (using `<think>` tags)  
+   - Outputs standardized OpenAI format with `<think>` wrapped reasoning  
+
+2. **Universal Compatibility**  
+   - Works with DeepSeek official/OpenRouter APIs (DeepSeek standard)  
+   - Compatible with OpenAI-style services like Nebius  
+   - Guides any OpenAI-compatible model using reasoning context  
+
+3. **Optimized Processing**  
+   - Automatically injects reasoning chains into prompts  
+   - Maintains clean output formatting  
+
 """
+
 
 import json
 import httpx
@@ -135,10 +165,11 @@ class Pipe:
         """处理思维链阶段"""
         client = httpx.AsyncClient(http2=True)
         self.current_request = client
-
+        # self.buffer = []
         try:
             # 发起推理请求
-            yield "<think>\n"
+            if self.valves.CONTENT_TYPE == "deepseek":
+                yield "<think>\n"
             # yield f"{self.valves.GENERATION_API_BASE}/chat/completions"
 
             payload: dict = {
@@ -171,41 +202,49 @@ class Pipe:
                 # log.info(f"Received raw data: {line}")
                 # yield "{" + json.dumps(line, ensure_ascii=False) + "}" + "\n" + "\n"
 
-                if not line.startswith("data: "):
+                if (not line) or (not line.startswith("data: ")):
                     continue
                 # yield "进入请求" + line + "\n"
                 data = json.loads(line[6:])
                 # yield "读取到数据" + json.dumps(data, ensure_ascii=False) + "\n"
+                # yield json.dumps(data, ensure_ascii=False) + "\n"
                 delta = self._parse_delta(data)
+                # yield json.dumps(delta, ensure_ascii=False) + "\n"
+                # if self._should_end_reasoning(data):
+                #    yield "True"
+                # else:
+                #    yield "False"
+
                 if self._should_end_reasoning(data):
                     break
+                reasoning_content = ""
                 if self.valves.CONTENT_TYPE == "deepseek" and delta.get(
                     "reasoning_content"
                 ):
                     # yield "deepseek模式"
+
                     # yield self._should_end_reasoning(data)
-                    self.buffer.append(delta["reasoning_content"])
+                    reasoning_content = delta["reasoning_content"]
                 else:
                     # yield "openai模式"
                     # yield json.dumps(delta, ensure_ascii=False) + "\n"
-                    # if self._should_end_reasoning(data):
-                    #    yield "True"
-                    # else:
-                    #    yield "False"
-                    if delta.get("content"):
-                        self.buffer.append(delta.get("content"))
+
+                    reasoning_content = delta["content"]
                     # yield json.dumps(delta)
                     # yield json.dumps(delta, ensure_ascii=False)
                     # yield delta.get("content")
-
+                if not reasoning_content:
+                    continue
+                yield reasoning_content
+                self.buffer.append(reasoning_content)
             # 终止请求以节省资源
             await response.aclose()
 
             # 发送缓冲内容
-            self.final_reason = "".join(self.buffer).replace("<think>", "")
-            if self.buffer:
-                yield self.final_reason
-                yield "\n</think>"
+            self.final_reason = "".join(self.buffer)
+            # if self.buffer:
+            # yield self.final_reason
+            yield "\n</think>\n"
 
         finally:
             await client.aclose()
@@ -243,7 +282,7 @@ class Pipe:
                 async for line in response.aiter_lines():
                     # yield f"Raw generation data: {line}")
                     # yield json.dumps(line, ensure_ascii=False) + "\n"
-                    if not line.startswith("data: "):
+                    if (not line) or not (line.startswith("data: ")):
                         continue
 
                     data = json.loads(line[6:])
@@ -263,14 +302,16 @@ class Pipe:
             content = (
                 data.get("choices", [{}])[0].get("delta", {}).get("reasoning_content")
             )
+
             if not content:
                 content = data.get("choices", [{}])[0].get("delta", {}).get("reasoning")
+
             if not content:
                 content = data.get("choices", [{}])[0].get("delta", {}).get("content")
 
         else:
             content = data.get("choices", [{}])[0].get("delta", {}).get("content")
-        delta["reasoning"] = content
+        delta["reasoning_content"] = content
         delta["content"] = content
 
         return delta
@@ -280,10 +321,12 @@ class Pipe:
         # return True
         if self.valves.CONTENT_TYPE == "deepseek":
             # DeepSeek标准：出现content字段且没有reasoning_content
-            return bool(
-                data.get("choices", [{}])[0].get("delta", {}).get("content")
-            ) and not data.get("choices", [{}])[0].get("delta", {}).get(
-                "reasoning_content"
+            return (
+                bool(data.get("choices", [{}])[0].get("delta", {}).get("content"))
+                and not data.get("choices", [{}])[0]
+                .get("delta", {})
+                .get("reasoning_content")
+                and not data.get("choices", [{}])[0].get("delta", {}).get("reasoning")
             )
 
         else:
