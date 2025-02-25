@@ -2,7 +2,7 @@
 title: DeepChain
 author: your_name
 description: DeepChain 思维链处理管道 - Open WebUI 0.5.6+
-version: 1.0.1
+version: 1.0.5
 licence: MIT
 project_url: https://github.com/tohsakrat/DeepChain---Universal-Reasoning-Pipeline
 author_url: https://github.com/tohsakrat
@@ -42,6 +42,7 @@ import logging
 from typing import AsyncGenerator, Callable, Awaitable, Optional
 from pydantic import BaseModel, Field
 import asyncio
+import time
 
 log = logging.getLogger(__name__)
 
@@ -110,6 +111,10 @@ class Pipe:
             self.state = "generation"
             async for chunk in self._process_reasoning(body):
                 yield chunk
+
+            # 等待0.1秒
+            time.sleep(0.2)
+
             # 阶段2：生成最终响应
             self.state = "responsing"
             async for chunk in self._generate_response(body):
@@ -183,7 +188,7 @@ class Pipe:
                 f"{self.valves. REASONING_API_BASE}/chat/completions",
                 json=payload,
                 headers={"Authorization": f"Bearer {self.valves.REASONING_API_KEY}"},
-                timeout=30,
+                timeout=300,
             ) as response:
 
                 if response.status_code != 200:
@@ -202,7 +207,11 @@ class Pipe:
                     # log.info(f"Received raw data: {line}")
                     # yield "{" + json.dumps(line, ensure_ascii=False) + "}" + "\n" + "\n"
 
-                    if (not line) or (not line.startswith("data: ")):
+                    if (
+                        (not line)
+                        or (not line.startswith("data: "))
+                        or (not self.validate_json(line))
+                    ):
                         continue
                     # yield "进入请求" + line + "\n"
                     data = json.loads(line[6:])
@@ -216,6 +225,7 @@ class Pipe:
                     #    yield "False"
 
                     if self._should_end_reasoning(data):
+
                         break
                     reasoning_content = ""
                     if self.valves.CONTENT_TYPE == "deepseek" and delta.get(
@@ -242,9 +252,12 @@ class Pipe:
 
             # 发送缓冲内容
             self.final_reason = "".join(self.buffer)
+            yield delta["reasoning_content"]
             # if self.buffer:
             # yield self.final_reason
-            yield "\n</think>\n"
+            if self.valves.CONTENT_TYPE == "deepseek":
+                yield "\n</think>"
+            yield "\n"
 
         finally:
             await client.aclose()
@@ -282,7 +295,7 @@ class Pipe:
                 async for line in response.aiter_lines():
                     # yield f"Raw generation data: {line}")
                     # yield json.dumps(line, ensure_ascii=False) + "\n"
-                    if (not line) or not (line.startswith("data: ")):
+                    if (not line) or (not self.validate_json(line)):
                         continue
 
                     data = json.loads(line[6:])
@@ -316,6 +329,14 @@ class Pipe:
 
         return delta
 
+    def validate_json(self, line):
+        json_str = line[6:]  # 移除前导内容
+        try:
+            json.loads(json_str)
+            return True
+        except json.JSONDecodeError:
+            return False
+
     def _should_end_reasoning(self, data: dict) -> bool:
         """判断是否结束思维链"""
         # return True
@@ -333,6 +354,9 @@ class Pipe:
             # OpenAI标准：检测到标签
 
             return bool(
-                data.get("choices", [{}])[0].get("delta", {}).get("content")
-                == "</think>"
+                data.get("choices", [{}])[0]
+                .get("delta", {})
+                .get("content")
+                .endswith("</think>")
             )
+
